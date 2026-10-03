@@ -328,8 +328,8 @@ async def restart(ctx):
         await ctx.send("У тебя нет прав на это.")
         return
     await ctx.send("Перезапускаюсь...")
-    os.execv(sys.executable, [sys.executable] + sys.argv)
-
+    await bot.close()
+    sys.exit(0)
 @bot.command(name="помощь")
 async def help_command(ctx):
     embed = discord.Embed(title="📋 Команды", color=discord.Color.blue())
