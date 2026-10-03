@@ -226,7 +226,17 @@ async def clear_mod(ctx, member: discord.Member = None):
         save_data(data)
     await ctx.send(f"✅ С {member.mention} сняты предупреждения и выговоры.")
 
-@bot.command(name="перезапуск", aliases=["пепезапуск"])
+@bot.command(name="созыв")
+async def call_all(ctx, *, text: str = None):
+    if not can_moderate(ctx):
+        await ctx.send("У тебя нет прав на это.")
+        return
+    if not text:
+        await ctx.send("Напиши: `!созыв текст созыва`")
+        return
+    await ctx.send(f"@everyone\n{text}\nВызвал: {ctx.author.mention}")
+
+@bot.command(name="перезапуск")
 async def restart(ctx):
     if not can_moderate(ctx):
         await ctx.send("У тебя нет прав на это.")
@@ -245,6 +255,7 @@ async def help_command(ctx):
     embed.add_field(name="!выговор @ник причина", value="Выдать выговор. 2 = бан навсегда", inline=False)
     embed.add_field(name="!бан @ник причина", value="Бан сразу", inline=False)
     embed.add_field(name="!снять @ник", value="Обнулить предупреждения и выговоры", inline=False)
+    embed.add_field(name="!созыв текст", value="Позвать всех на сервере", inline=False)
     embed.add_field(name="!перезапуск", value="Перезапустить бота", inline=False)
     await ctx.send(embed=embed)
 
