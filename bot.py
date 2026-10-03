@@ -4,10 +4,12 @@ import random
 import os
 import json
 import sys
+import re
 
 TOKEN = os.getenv("DISCORD_TOKEN")
 PREFIX = "!"
 DATA_FILE = "moderation.json"
+ROLE_NAME = "рыцарь"
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -63,13 +65,14 @@ welcome_messages = [
     "Добро пожаловать в семью! Мы тебя ждали!"
 ]
 
-role_text = """
-Чтобы получить роль, напиши следующее:
-1. IC: Имя
-2. Где работаешь
-3. Возраст
-4. Настоящее имя
-5. Тег зам или лид
+form_text = """Скопируй форму, заполни пустые поля и отправь одним сообщением:
+
+IC: 
+Где работаешь: 
+Возраст: 
+Настоящее имя: 
+Тег зам или лид: 
+Часовой пояс: 
 """
 
 def load_data():
@@ -86,12 +89,32 @@ def get_user(data, guild_id, user_id):
     gid = str(guild_id)
     uid = str(user_id)
     data.setdefault(gid, {})
-    data[gid].setdefault(uid, {"warnings": 0, "reprimands": 0})
+    data[gid].setdefault(uid, {"warnings": 0, "reprimands": 0, "profile": {}})
+    data[gid][uid].setdefault("profile", {})
     return data[gid][uid]
 
 def can_moderate(ctx):
     perms = ctx.author.guild_permissions
     return perms.ban_members or perms.administrator
+
+def field(text, label):
+    match = re.search(rf"{label}\s*:\s*(.+)", text, re.IGNORECASE)
+    if not match:
+        return ""
+    return match.group(1).strip()
+
+def parse_form(text):
+    profile = {
+        "ic": field(text, "IC"),
+        "work": field(text, "Где работаешь"),
+        "age": field(text, "Возраст"),
+        "real_name": field(text, "Настоящее имя"),
+        "tag": field(text, "Тег зам или лид"),
+        "timezone": field(text, "Часовой пояс"),
+    }
+    if not all(profile.values()):
+        return None
+    return profile
 
 @bot.event
 async def on_ready():
@@ -102,7 +125,39 @@ async def on_member_join(member):
     channel = member.guild.system_channel
     if channel:
         message = random.choice(welcome_messages)
-        await channel.send(f"{message} {member.mention}\n{role_text}")
+        await channel.send(f"{message} {member.mention}\n{form_text}")
+
+@bot.event
+async def on_message(message):
+    if message.author.bot or not message.guild:
+        return
+
+    if not message.content.startswith(PREFIX):
+        profile = parse_form(message.content)
+        if profile:
+            data = load_data()
+            user = get_user(data, message.guild.id, message.author.id)
+            user["profile"] = profile
+            save_data(data)
+
+            role = discord.utils.find(lambda r: r.name.lower() == ROLE_NAME, message.guild.roles)
+            given = False
+            if role:
+                try:
+                    await message.author.add_roles(role, reason="Заполнил заявку")
+                    given = True
+                except discord.Forbidden:
+                    given = False
+
+            if given:
+                await message.channel.send(f"{message.author.mention}, заявка принята. Роль {role.mention} выдана.")
+            elif role is None:
+                await message.channel.send(f"{message.author.mention}, заявка сохранена, но роль `рыцарь` на сервере не найдена.")
+            else:
+                await message.channel.send(f"{message.author.mention}, заявка сохранена, но бот не смог выдать роль. Подними роль бота выше роли `рыцарь`.")
+            return
+
+    await bot.process_commands(message)
 
 @bot.command(name="привет")
 async def hello(ctx):
@@ -115,6 +170,36 @@ async def ping(ctx):
 @bot.command(name="семья")
 async def family(ctx):
     await ctx.send("👨‍👩‍👧‍👦 Это наш семейный сервер! Здесь всегда рады всем ❤️")
+
+@bot.command(name="заявка")
+async def application(ctx):
+    await ctx.send(form_text)
+
+@bot.command(name="инфа")
+async def info(ctx, member: discord.Member = None):
+    if not can_moderate(ctx):
+        await ctx.send("У тебя нет прав на это.")
+        return
+    if member is None:
+        await ctx.send("Напиши: `!инфа @ник`")
+        return
+    data = load_data()
+    user = get_user(data, ctx.guild.id, member.id)
+    profile = user.get("profile") or {}
+    if not profile:
+        await ctx.send(f"По {member.mention} заявки нет.")
+        return
+    await ctx.send(
+        f"📋 Инфа {member.mention}\n"
+        f"IC: {profile.get('ic', '—')}\n"
+        f"Где работает: {profile.get('work', '—')}\n"
+        f"Возраст: {profile.get('age', '—')}\n"
+        f"Настоящее имя: {profile.get('real_name', '—')}\n"
+        f"Тег зам или лид: {profile.get('tag', '—')}\n"
+        f"Часовой пояс: {profile.get('timezone', '—')}\n"
+        f"Предупреждения: {user['warnings']}/3\n"
+        f"Выговоры: {user['reprimands']}/2"
+    )
 
 @bot.command(name="предупреждение")
 async def warn(ctx, member: discord.Member = None, *, reason: str = "не указана"):
@@ -222,7 +307,8 @@ async def clear_mod(ctx, member: discord.Member = None):
     gid = str(ctx.guild.id)
     uid = str(member.id)
     if gid in data and uid in data[gid]:
-        data[gid][uid] = {"warnings": 0, "reprimands": 0}
+        data[gid][uid]["warnings"] = 0
+        data[gid][uid]["reprimands"] = 0
         save_data(data)
     await ctx.send(f"✅ С {member.mention} сняты предупреждения и выговоры.")
 
@@ -250,6 +336,8 @@ async def help_command(ctx):
     embed.add_field(name="!привет", value="Поздороваться", inline=False)
     embed.add_field(name="!пинг", value="Проверить бота", inline=False)
     embed.add_field(name="!семья", value="Сообщение для семьи", inline=False)
+    embed.add_field(name="!заявка", value="Показать форму заявки", inline=False)
+    embed.add_field(name="!инфа @ник", value="Заявка и наказания. Только модераторам", inline=False)
     embed.add_field(name="!досье @ник", value="Сколько предупреждений и выговоров", inline=False)
     embed.add_field(name="!предупреждение @ник причина", value="Выдать предупреждение. 3 = выговор", inline=False)
     embed.add_field(name="!выговор @ник причина", value="Выдать выговор. 2 = бан навсегда", inline=False)
