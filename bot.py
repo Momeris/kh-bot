@@ -3,6 +3,7 @@ from discord.ext import commands
 import random
 import os
 import json
+import sys
 
 TOKEN = os.getenv("DISCORD_TOKEN")
 PREFIX = "!"
@@ -225,6 +226,14 @@ async def clear_mod(ctx, member: discord.Member = None):
         save_data(data)
     await ctx.send(f"✅ С {member.mention} сняты предупреждения и выговоры.")
 
+@bot.command(name="перезапуск")
+async def restart(ctx):
+    if not can_moderate(ctx):
+        await ctx.send("У тебя нет прав на это.")
+        return
+    await ctx.send("Перезапускаюсь...")
+    os.execv(sys.executable, [sys.executable] + sys.argv)
+
 @bot.command(name="помощь")
 async def help_command(ctx):
     embed = discord.Embed(title="📋 Команды", color=discord.Color.blue())
@@ -236,6 +245,7 @@ async def help_command(ctx):
     embed.add_field(name="!выговор @ник причина", value="Выдать выговор. 2 = бан навсегда", inline=False)
     embed.add_field(name="!бан @ник причина", value="Бан сразу", inline=False)
     embed.add_field(name="!снять @ник", value="Обнулить предупреждения и выговоры", inline=False)
+    embed.add_field(name="!перезапуск", value="Перезапустить бота", inline=False)
     await ctx.send(embed=embed)
 
 bot.run(TOKEN)
