@@ -3,8 +3,8 @@ from discord.ext import commands
 import random
 import os
 import json
-import sys
 import re
+import asyncio
 
 TOKEN = os.getenv("DISCORD_TOKEN")
 PREFIX = "!"
@@ -132,32 +132,29 @@ async def on_message(message):
     if message.author.bot or not message.guild:
         return
 
-    if not message.content.startswith(PREFIX):
-        profile = parse_form(message.content)
-        if profile:
-            data = load_data()
-            user = get_user(data, message.guild.id, message.author.id)
-            user["profile"] = profile
-            save_data(data)
-
-            role = discord.utils.find(lambda r: r.name.lower() == ROLE_NAME, message.guild.roles)
-            given = False
-            if role:
-                try:
-                    await message.author.add_roles(role, reason="Заполнил заявку")
-                    given = True
-                except discord.Forbidden:
-                    given = False
-
-            if given:
-                await message.channel.send(f"{message.author.mention}, заявка принята. Роль {role.mention} выдана.")
-            elif role is None:
-                await message.channel.send(f"{message.author.mention}, заявка сохранена, но роль `рыцарь` на сервере не найдена.")
-            else:
-                await message.channel.send(f"{message.author.mention}, заявка сохранена, но бот не смог выдать роль. Подними роль бота выше роли `рыцарь`.")
-            return
-
     await bot.process_commands(message)
+
+    if message.content.startswith(PREFIX):
+        return
+
+    profile = parse_form(message.content)
+    if not profile:
+        return
+
+    data = load_data()
+    user = get_user(data, message.guild.id, message.author.id)
+    user["profile"] = profile
+    save_data(data)
+
+    role = discord.utils.find(lambda r: r.name.lower() == ROLE_NAME, message.guild.roles)
+    if role is None:
+        await message.channel.send(f"{message.author.mention}, заявка сохранена, но роль `рыцарь` не найдена.")
+        return
+    try:
+        await message.author.add_roles(role, reason="Заполнил заявку")
+        await message.channel.send(f"{message.author.mention}, заявка принята. Роль {role.mention} выдана.")
+    except discord.Forbidden:
+        await message.channel.send(f"{message.author.mention}, заявка сохранена, но бот не смог выдать роль.")
 
 @bot.command(name="привет")
 async def hello(ctx):
@@ -187,7 +184,11 @@ async def info(ctx, member: discord.Member = None):
     user = get_user(data, ctx.guild.id, member.id)
     profile = user.get("profile") or {}
     if not profile:
-        await ctx.send(f"По {member.mention} заявки нет.")
+        await ctx.send(
+            f"По {member.mention} заявки нет.\n"
+            f"Предупреждения: {user['warnings']}/3\n"
+            f"Выговоры: {user['reprimands']}/2"
+        )
         return
     await ctx.send(
         f"📋 Инфа {member.mention}\n"
@@ -222,14 +223,13 @@ async def warn(ctx, member: discord.Member = None, *, reason: str = "не ука
         user["warnings"] = 0
         user["reprimands"] += 1
         text += f"\n\n🚨 3 предупреждения. Автоматически выдан выговор.\nВыговоров: {user['reprimands']}/2"
-
         if user["reprimands"] >= 2:
             save_data(data)
             try:
                 await member.ban(reason="2 выговора")
                 text += "\n\n⛔ 2 выговора. Выдан бан навсегда."
             except discord.Forbidden:
-                text += "\n\nНе смог забанить: у бота нет права Ban Members или роль бота ниже роли человека."
+                text += "\n\nНе смог забанить: роль бота ниже роли человека."
             await ctx.send(text)
             return
 
@@ -260,12 +260,46 @@ async def reprimand(ctx, member: discord.Member = None, *, reason: str = "не �
             await member.ban(reason="2 выговора")
             text += "\n\n⛔ 2 выговора. Выдан бан навсегда."
         except discord.Forbidden:
-            text += "\n\nНе смог забанить: у бота нет права Ban Members или роль бота ниже роли человека."
+            text += "\n\nНе смог забанить: роль бота ниже роли человека."
         await ctx.send(text)
         return
 
     save_data(data)
     await ctx.send(text)
+
+@bot.command(name="снятьпредупреждение")
+async def remove_warning(ctx, member: discord.Member = None):
+    if not can_moderate(ctx):
+        await ctx.send("У тебя нет прав на это.")
+        return
+    if member is None:
+        await ctx.send("Напиши: `!снятьпредупреждение @ник`")
+        return
+    data = load_data()
+    user = get_user(data, ctx.guild.id, member.id)
+    if user["warnings"] <= 0:
+        await ctx.send(f"У {member.mention} нет предупреждений.")
+        return
+    user["warnings"] -= 1
+    save_data(data)
+    await ctx.send(f"✅ С {member.mention} снято 1 предупреждение. Осталось: {user['warnings']}/3")
+
+@bot.command(name="снятьвыговор")
+async def remove_reprimand(ctx, member: discord.Member = None):
+    if not can_moderate(ctx):
+        await ctx.send("У тебя нет прав на это.")
+        return
+    if member is None:
+        await ctx.send("Напиши: `!снятьвыговор @ник`")
+        return
+    data = load_data()
+    user = get_user(data, ctx.guild.id, member.id)
+    if user["reprimands"] <= 0:
+        await ctx.send(f"У {member.mention} нет выговоров.")
+        return
+    user["reprimands"] -= 1
+    save_data(data)
+    await ctx.send(f"✅ С {member.mention} снят 1 выговор. Осталось: {user['reprimands']}/2")
 
 @bot.command(name="бан")
 async def ban_user(ctx, member: discord.Member = None, *, reason: str = "не указана"):
@@ -282,7 +316,7 @@ async def ban_user(ctx, member: discord.Member = None, *, reason: str = "не у
         await member.ban(reason=reason)
         await ctx.send(f"⛔ {member.mention} забанен навсегда.\nПричина: {reason}")
     except discord.Forbidden:
-        await ctx.send("Не смог забанить. Подними роль бота выше роли человека и дай боту право Ban Members.")
+        await ctx.send("Не смог забанить. Подними роль бота выше роли человека.")
 
 @bot.command(name="досье")
 async def dossier(ctx, member: discord.Member = None):
@@ -294,23 +328,6 @@ async def dossier(ctx, member: discord.Member = None):
         f"Предупреждения: {user['warnings']}/3\n"
         f"Выговоры: {user['reprimands']}/2"
     )
-
-@bot.command(name="снять")
-async def clear_mod(ctx, member: discord.Member = None):
-    if not can_moderate(ctx):
-        await ctx.send("У тебя нет прав на это.")
-        return
-    if member is None:
-        await ctx.send("Напиши: `!снять @ник`")
-        return
-    data = load_data()
-    gid = str(ctx.guild.id)
-    uid = str(member.id)
-    if gid in data and uid in data[gid]:
-        data[gid][uid]["warnings"] = 0
-        data[gid][uid]["reprimands"] = 0
-        save_data(data)
-    await ctx.send(f"✅ С {member.mention} сняты предупреждения и выговоры.")
 
 @bot.command(name="созыв")
 async def call_all(ctx, *, text: str = None):
@@ -327,9 +344,11 @@ async def restart(ctx):
     if not can_moderate(ctx):
         await ctx.send("У тебя нет прав на это.")
         return
-    await ctx.send("Перезапускаюсь...")
+    await ctx.send("Перезапускаюсь. Сейчас вернусь.")
+    await asyncio.sleep(1)
     await bot.close()
-    sys.exit(0)
+    os._exit(0)
+
 @bot.command(name="помощь")
 async def help_command(ctx):
     embed = discord.Embed(title="📋 Команды", color=discord.Color.blue())
@@ -337,14 +356,15 @@ async def help_command(ctx):
     embed.add_field(name="!пинг", value="Проверить бота", inline=False)
     embed.add_field(name="!семья", value="Сообщение для семьи", inline=False)
     embed.add_field(name="!заявка", value="Показать форму заявки", inline=False)
-    embed.add_field(name="!инфа @ник", value="Заявка и наказания. Только модераторам", inline=False)
-    embed.add_field(name="!досье @ник", value="Сколько предупреждений и выговоров", inline=False)
-    embed.add_field(name="!предупреждение @ник причина", value="Выдать предупреждение. 3 = выговор", inline=False)
-    embed.add_field(name="!выговор @ник причина", value="Выдать выговор. 2 = бан навсегда", inline=False)
+    embed.add_field(name="!инфа @ник", value="Заявка, предупреждения и выговоры", inline=False)
+    embed.add_field(name="!досье @ник", value="Только предупреждения и выговоры", inline=False)
+    embed.add_field(name="!предупреждение @ник причина", value="Предупреждение. 3 = выговор", inline=False)
+    embed.add_field(name="!выговор @ник причина", value="Выговор. 2 = бан навсегда", inline=False)
+    embed.add_field(name="!снятьпредупреждение @ник", value="Снять 1 предупреждение", inline=False)
+    embed.add_field(name="!снятьвыговор @ник", value="Снять 1 выговор", inline=False)
     embed.add_field(name="!бан @ник причина", value="Бан сразу", inline=False)
-    embed.add_field(name="!снять @ник", value="Обнулить предупреждения и выговоры", inline=False)
-    embed.add_field(name="!созыв текст", value="Позвать всех на сервере", inline=False)
-    embed.add_field(name="!перезапуск", value="Перезапустить бота", inline=False)
+    embed.add_field(name="!созыв текст", value="Позвать всех", inline=False)
+    embed.add_field(name="!перезапуск", value="Перезапустить бота один раз", inline=False)
     await ctx.send(embed=embed)
 
 bot.run(TOKEN)
