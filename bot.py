@@ -226,7 +226,7 @@ async def clear_mod(ctx, member: discord.Member = None):
         save_data(data)
     await ctx.send(f"✅ С {member.mention} сняты предупреждения и выговоры.")
 
-@bot.command(name="перезапуск")
+@bot.command(name="перезапуск", aliases=["пепезапуск"])
 async def restart(ctx):
     if not can_moderate(ctx):
         await ctx.send("У тебя нет прав на это.")
