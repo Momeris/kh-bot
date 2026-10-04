@@ -347,10 +347,7 @@ async def restart(ctx):
     if not can_moderate(ctx):
         await ctx.send("У тебя нет прав на это.")
         return
-    await ctx.send("Перезапускаюсь. Сейчас вернусь.")
-    await asyncio.sleep(1)
-    await bot.close()
-    os._exit(0)
+    await ctx.send("Перезапуск из Discord отключён. На Railway нажми Redeploy.")
 
 @bot.command(name="помощь")
 async def help_command(ctx):
