@@ -321,6 +321,18 @@ async def ban_user(ctx, member: discord.Member = None, *, reason: str = "не у
     except discord.Forbidden:
         await ctx.send("Не смог забанить. Подними роль бота выше роли человека.")
 
+@bot.command(name="очистить")
+async def clear_chat(ctx, amount: int = 10):
+    if not can_moderate(ctx):
+        await ctx.send("У тебя нет прав на это.")
+        return
+    if amount < 1 or amount > 100:
+        await ctx.send("Напиши число от 1 до 100.")
+        return
+    deleted = await ctx.channel.purge(limit=amount + 1)
+    msg = await ctx.send(f"Удалено сообщений: {len(deleted) - 1}")
+    await msg.delete(delay=3)
+
 @bot.command(name="досье")
 async def dossier(ctx, member: discord.Member = None):
     member = member or ctx.author
@@ -356,6 +368,7 @@ async def help_command(ctx):
     embed.add_field(name="!снятьпредупреждение @ник", value="Снять 1 предупреждение", inline=False)
     embed.add_field(name="!снятьвыговор @ник", value="Снять 1 выговор", inline=False)
     embed.add_field(name="!бан @ник причина", value="Бан сразу", inline=False)
+    embed.add_field(name="!очистить 10", value="Удалить сообщения. От 1 до 100", inline=False)
     embed.add_field(name="!созыв текст", value="Позвать всех", inline=False)
     await ctx.send(embed=embed)
 
