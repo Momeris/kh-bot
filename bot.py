@@ -104,16 +104,23 @@ class ApplicationModal(discord.ui.Modal, title="Анкета"):
 
     async def on_submit(self, interaction: discord.Interaction):
         guild = interaction.guild
+        ic_name = str(self.ic.value).strip()[:32]
         data = load_data()
         user = get_user(data, guild.id, interaction.user.id)
         user["profile"] = {
-            "ic": str(self.ic.value).strip(),
+            "ic": ic_name,
             "work": self.org,
             "age": str(self.age.value).strip(),
             "real_name": str(self.real_name.value).strip(),
             "timezone": str(self.timezone.value).strip(),
         }
         save_data(data)
+
+        nick_ok = True
+        try:
+            await interaction.user.edit(nick=ic_name)
+        except discord.Forbidden:
+            nick_ok = False
 
         names = [ROLE_NAME, self.org]
         roles = [find_role(guild, name) for name in names]
@@ -122,7 +129,9 @@ class ApplicationModal(discord.ui.Modal, title="Анкета"):
         try:
             if roles:
                 await interaction.user.add_roles(*roles, reason="Анкета")
-            text = f"Анкета отправлена.\nОрганизация: {self.org}"
+            text = f"Анкета отправлена.\nОрганизация: {self.org}\nНик: {ic_name}"
+            if not nick_ok:
+                text += "\nНик не сменён: роль бота ниже роли человека или это владелец сервера."
             if missing:
                 text += "\nНе найдены роли: " + ", ".join(missing)
             await interaction.response.send_message(text, ephemeral=True)
