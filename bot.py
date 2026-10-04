@@ -3,13 +3,13 @@ from discord.ext import commands
 import random
 import os
 import json
-import re
 import asyncio
 
 TOKEN = os.getenv("DISCORD_TOKEN")
 PREFIX = "!"
 DATA_FILE = "moderation.json"
 ROLE_NAME = "рыцарь"
+ORGS = ["ФСБ", "ЦГБ3", "ЦГБ7", "УМВД", "ГИБДД", "ФСВНГ", "СК", "Прокурор"]
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -65,16 +65,6 @@ welcome_messages = [
     "Добро пожаловать в семью! Мы тебя ждали!"
 ]
 
-form_text = """Скопируй форму, заполни пустые поля и отправь одним сообщением:
-
-IC: 
-Где работаешь: 
-Возраст: 
-Настоящее имя: 
-Тег зам или лид: 
-Часовой пояс: 
-"""
-
 def load_data():
     if not os.path.exists(DATA_FILE):
         return {}
@@ -97,27 +87,72 @@ def can_moderate(ctx):
     perms = ctx.author.guild_permissions
     return perms.ban_members or perms.administrator
 
-def field(text, label):
-    match = re.search(rf"{label}\s*:\s*(.+)", text, re.IGNORECASE)
-    if not match:
-        return ""
-    return match.group(1).strip()
+def find_role(guild, name):
+    return discord.utils.find(lambda r: r.name.lower() == name.lower(), guild.roles)
 
-def parse_form(text):
-    profile = {
-        "ic": field(text, "IC"),
-        "work": field(text, "Где работаешь"),
-        "age": field(text, "Возраст"),
-        "real_name": field(text, "Настоящее имя"),
-        "tag": field(text, "Тег зам или лид"),
-        "timezone": field(text, "Часовой пояс"),
-    }
-    if not all(profile.values()):
-        return None
-    return profile
+def role_mention(guild, name):
+    role = find_role(guild, name)
+    return role.mention if role else name
+
+class ApplicationModal(discord.ui.Modal, title="Анкета"):
+    def __init__(self, org):
+        super().__init__()
+        self.org = org
+        self.ic = discord.ui.TextInput(label="IC: Имя", placeholder="Игровое имя", required=True, max_length=50)
+        self.age = discord.ui.TextInput(label="Возраст", placeholder="18", required=True, max_length=3)
+        self.real_name = discord.ui.TextInput(label="Настоящее имя", placeholder="Имя", required=True, max_length=50)
+        self.timezone = discord.ui.TextInput(label="Часовой пояс", placeholder="МСК", required=True, max_length=30)
+        self.add_item(self.ic)
+        self.add_item(self.age)
+        self.add_item(self.real_name)
+        self.add_item(self.timezone)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        guild = interaction.guild
+        tag = f"{role_mention(guild, 'Заместитель')} {role_mention(guild, 'Бос')}"
+
+        data = load_data()
+        user = get_user(data, guild.id, interaction.user.id)
+        user["profile"] = {
+            "ic": str(self.ic.value).strip(),
+            "work": self.org,
+            "age": str(self.age.value).strip(),
+            "real_name": str(self.real_name.value).strip(),
+            "tag": tag,
+            "timezone": str(self.timezone.value).strip(),
+        }
+        save_data(data)
+
+        names = [ROLE_NAME, self.org]
+        roles = [find_role(guild, name) for name in names]
+        roles = [r for r in roles if r]
+        missing = [name for name in names if not find_role(guild, name)]
+        try:
+            if roles:
+                await interaction.user.add_roles(*roles, reason="Анкета")
+            text = f"Анкета отправлена.\nОрганизация: {self.org}\nТег: {tag}"
+            if missing:
+                text += "\nНе найдены роли: " + ", ".join(missing)
+            await interaction.response.send_message(text, ephemeral=True)
+        except discord.Forbidden:
+            await interaction.response.send_message("Анкета сохранена, но роль бота ниже выдаваемых ролей.", ephemeral=True)
+
+class OrgSelect(discord.ui.Select):
+    def __init__(self):
+        options = [discord.SelectOption(label=name) for name in ORGS]
+        super().__init__(placeholder="Где работаешь", min_values=1, max_values=1, options=options, custom_id="org_select")
+
+    async def callback(self, interaction: discord.Interaction):
+        await interaction.response.send_modal(ApplicationModal(self.values[0]))
+
+class ApplicationView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+        self.add_item(OrgSelect())
 
 @bot.event
 async def on_ready():
+    bot.add_view(ApplicationView())
     print(f"Бот {bot.user} успешно запущен!")
 
 @bot.event
@@ -125,36 +160,10 @@ async def on_member_join(member):
     channel = member.guild.system_channel
     if channel:
         message = random.choice(welcome_messages)
-        await channel.send(f"{message} {member.mention}\n{form_text}")
-
-@bot.event
-async def on_message(message):
-    if message.author.bot or not message.guild:
-        return
-
-    await bot.process_commands(message)
-
-    if message.content.startswith(PREFIX):
-        return
-
-    profile = parse_form(message.content)
-    if not profile:
-        return
-
-    data = load_data()
-    user = get_user(data, message.guild.id, message.author.id)
-    user["profile"] = profile
-    save_data(data)
-
-    role = discord.utils.find(lambda r: r.name.lower() == ROLE_NAME, message.guild.roles)
-    if role is None:
-        await message.channel.send(f"{message.author.mention}, заявка сохранена, но роль `рыцарь` не найдена.")
-        return
-    try:
-        await message.author.add_roles(role, reason="Заполнил заявку")
-        await message.channel.send(f"{message.author.mention}, заявка принята. Роль {role.mention} выдана.")
-    except discord.Forbidden:
-        await message.channel.send(f"{message.author.mention}, заявка сохранена, но бот не смог выдать роль.")
+        await channel.send(
+            f"{message} {member.mention}\nВыбери организацию и заполни анкету. Тег зама и босса бот поставит сам.",
+            view=ApplicationView()
+        )
 
 @bot.command(name="привет")
 async def hello(ctx):
@@ -170,7 +179,7 @@ async def family(ctx):
 
 @bot.command(name="заявка")
 async def application(ctx):
-    await ctx.send(form_text)
+    await ctx.send("Выбери организацию и заполни анкету.", view=ApplicationView())
 
 @bot.command(name="инфа")
 async def info(ctx, member: discord.Member = None):
@@ -185,7 +194,7 @@ async def info(ctx, member: discord.Member = None):
     profile = user.get("profile") or {}
     if not profile:
         await ctx.send(
-            f"По {member.mention} заявки нет.\n"
+            f"По {member.mention} анкеты нет.\n"
             f"Предупреждения: {user['warnings']}/3\n"
             f"Выговоры: {user['reprimands']}/2"
         )
@@ -196,7 +205,7 @@ async def info(ctx, member: discord.Member = None):
         f"Где работает: {profile.get('work', '—')}\n"
         f"Возраст: {profile.get('age', '—')}\n"
         f"Настоящее имя: {profile.get('real_name', '—')}\n"
-        f"Тег зам или лид: {profile.get('tag', '—')}\n"
+        f"Тег: {profile.get('tag', '—')}\n"
         f"Часовой пояс: {profile.get('timezone', '—')}\n"
         f"Предупреждения: {user['warnings']}/3\n"
         f"Выговоры: {user['reprimands']}/2"
@@ -213,12 +222,10 @@ async def warn(ctx, member: discord.Member = None, *, reason: str = "не ука
     if member.bot or member == ctx.author:
         await ctx.send("Так нельзя.")
         return
-
     data = load_data()
     user = get_user(data, ctx.guild.id, member.id)
     user["warnings"] += 1
     text = f"⚠️ {member.mention} получил предупреждение.\nПричина: {reason}\nПредупреждений: {user['warnings']}/3"
-
     if user["warnings"] >= 3:
         user["warnings"] = 0
         user["reprimands"] += 1
@@ -232,7 +239,6 @@ async def warn(ctx, member: discord.Member = None, *, reason: str = "не ука
                 text += "\n\nНе смог забанить: роль бота ниже роли человека."
             await ctx.send(text)
             return
-
     save_data(data)
     await ctx.send(text)
 
@@ -247,13 +253,11 @@ async def reprimand(ctx, member: discord.Member = None, *, reason: str = "не �
     if member.bot or member == ctx.author:
         await ctx.send("Так нельзя.")
         return
-
     data = load_data()
     user = get_user(data, ctx.guild.id, member.id)
     user["reprimands"] += 1
     user["warnings"] = 0
     text = f"🚨 {member.mention} получил выговор.\nПричина: {reason}\nВыговоров: {user['reprimands']}/2"
-
     if user["reprimands"] >= 2:
         save_data(data)
         try:
@@ -263,7 +267,6 @@ async def reprimand(ctx, member: discord.Member = None, *, reason: str = "не �
             text += "\n\nНе смог забанить: роль бота ниже роли человека."
         await ctx.send(text)
         return
-
     save_data(data)
     await ctx.send(text)
 
@@ -355,8 +358,8 @@ async def help_command(ctx):
     embed.add_field(name="!привет", value="Поздороваться", inline=False)
     embed.add_field(name="!пинг", value="Проверить бота", inline=False)
     embed.add_field(name="!семья", value="Сообщение для семьи", inline=False)
-    embed.add_field(name="!заявка", value="Показать форму заявки", inline=False)
-    embed.add_field(name="!инфа @ник", value="Заявка, предупреждения и выговоры", inline=False)
+    embed.add_field(name="!заявка", value="Открыть анкету", inline=False)
+    embed.add_field(name="!инфа @ник", value="Анкета, предупреждения и выговоры", inline=False)
     embed.add_field(name="!досье @ник", value="Только предупреждения и выговоры", inline=False)
     embed.add_field(name="!предупреждение @ник причина", value="Предупреждение. 3 = выговор", inline=False)
     embed.add_field(name="!выговор @ник причина", value="Выговор. 2 = бан навсегда", inline=False)
