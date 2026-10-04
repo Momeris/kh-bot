@@ -3,7 +3,6 @@ from discord.ext import commands
 import random
 import os
 import json
-import asyncio
 
 TOKEN = os.getenv("DISCORD_TOKEN")
 PREFIX = "!"
@@ -90,10 +89,6 @@ def can_moderate(ctx):
 def find_role(guild, name):
     return discord.utils.find(lambda r: r.name.lower() == name.lower(), guild.roles)
 
-def role_mention(guild, name):
-    role = find_role(guild, name)
-    return role.mention if role else name
-
 class ApplicationModal(discord.ui.Modal, title="Анкета"):
     def __init__(self, org):
         super().__init__()
@@ -109,8 +104,6 @@ class ApplicationModal(discord.ui.Modal, title="Анкета"):
 
     async def on_submit(self, interaction: discord.Interaction):
         guild = interaction.guild
-        tag = f"{role_mention(guild, 'Заместитель')} {role_mention(guild, 'Бос')}"
-
         data = load_data()
         user = get_user(data, guild.id, interaction.user.id)
         user["profile"] = {
@@ -118,7 +111,6 @@ class ApplicationModal(discord.ui.Modal, title="Анкета"):
             "work": self.org,
             "age": str(self.age.value).strip(),
             "real_name": str(self.real_name.value).strip(),
-            "tag": tag,
             "timezone": str(self.timezone.value).strip(),
         }
         save_data(data)
@@ -130,7 +122,7 @@ class ApplicationModal(discord.ui.Modal, title="Анкета"):
         try:
             if roles:
                 await interaction.user.add_roles(*roles, reason="Анкета")
-            text = f"Анкета отправлена.\nОрганизация: {self.org}\nТег: {tag}"
+            text = f"Анкета отправлена.\nОрганизация: {self.org}"
             if missing:
                 text += "\nНе найдены роли: " + ", ".join(missing)
             await interaction.response.send_message(text, ephemeral=True)
@@ -161,7 +153,7 @@ async def on_member_join(member):
     if channel:
         message = random.choice(welcome_messages)
         await channel.send(
-            f"{message} {member.mention}\nВыбери организацию и заполни анкету. Тег зама и босса бот поставит сам.",
+            f"{message} {member.mention}\nВыбери организацию и заполни анкету.",
             view=ApplicationView()
         )
 
@@ -205,7 +197,6 @@ async def info(ctx, member: discord.Member = None):
         f"Где работает: {profile.get('work', '—')}\n"
         f"Возраст: {profile.get('age', '—')}\n"
         f"Настоящее имя: {profile.get('real_name', '—')}\n"
-        f"Тег: {profile.get('tag', '—')}\n"
         f"Часовой пояс: {profile.get('timezone', '—')}\n"
         f"Предупреждения: {user['warnings']}/3\n"
         f"Выговоры: {user['reprimands']}/2"
@@ -342,13 +333,6 @@ async def call_all(ctx, *, text: str = None):
         return
     await ctx.send(f"@everyone\n{text}\nВызвал: {ctx.author.mention}")
 
-@bot.command(name="перезапуск")
-async def restart(ctx):
-    if not can_moderate(ctx):
-        await ctx.send("У тебя нет прав на это.")
-        return
-    await ctx.send("Перезапуск из Discord отключён. На Railway нажми Redeploy.")
-
 @bot.command(name="помощь")
 async def help_command(ctx):
     embed = discord.Embed(title="📋 Команды", color=discord.Color.blue())
@@ -364,7 +348,6 @@ async def help_command(ctx):
     embed.add_field(name="!снятьвыговор @ник", value="Снять 1 выговор", inline=False)
     embed.add_field(name="!бан @ник причина", value="Бан сразу", inline=False)
     embed.add_field(name="!созыв текст", value="Позвать всех", inline=False)
-    embed.add_field(name="!перезапуск", value="Перезапустить бота один раз", inline=False)
     await ctx.send(embed=embed)
 
 bot.run(TOKEN)
