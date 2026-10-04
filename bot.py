@@ -64,6 +64,18 @@ welcome_messages = [
     "Добро пожаловать в семью! Мы тебя ждали!"
 ]
 
+welcome_images = [
+    "https://cdn.discordapp.com/attachments/1555563045617410181/1556162706195746826/image.png?backend=b2&ex=6ac328f5&is=6ac1d775&hm=76c4b21601b68815aaa6a68f5cbfe799b8668898d00905f4e860c290dbf069ef&",
+    "https://cdn.discordapp.com/attachments/1555563045617410181/1556162708569718894/image.png?backend=b2&ex=6ac328f5&is=6ac1d775&hm=dc82237f3c54ff5f3a054015be583bc5fda666133145908e81cc96af19102863&",
+    "https://cdn.discordapp.com/attachments/1555563045617410181/1556162710469615707/image.png?backend=b2&ex=6ac328f6&is=6ac1d776&hm=9583d13e938a83c8b0fb7391e437636633769be8f85595114a1c82b2327b977d&",
+    "https://cdn.discordapp.com/attachments/1555563045617410181/1556162712151789589/image.png?backend=b2&ex=6ac328f6&is=6ac1d776&hm=c6c3f6c1815ce14514ebbbd10d1e8bf4c152b0a659004fd5aba4b172f4b7675f&",
+    "https://cdn.discordapp.com/attachments/1555563045617410181/1556162714030702654/image.png?backend=b2&ex=6ac328f7&is=6ac1d777&hm=cb2c8e85d2dc3debfd73b6ed1b0706cd445f947348bb814a65d7bf55b04e8a0c&",
+    "https://cdn.discordapp.com/attachments/1555563045617410181/1556162715389661234/image.png?backend=b2&ex=6ac328f7&is=6ac1d777&hm=9cc950149b221c302bc4857d2b09db2dc9b2dec9a4b58b71d8bc611468a201b5&",
+    "https://cdn.discordapp.com/attachments/1555563045617410181/1556162716840755210/image.png?backend=b2&ex=6ac328f7&is=6ac1d777&hm=229f3ee8048f3da4a9e8d2fae8998ec07ddcb7a6876ce52d8d0ed657ff600f96&",
+    "https://cdn.discordapp.com/attachments/1555563045617410181/1556162718657159238/image.png?backend=b2&ex=6ac328f8&is=6ac1d778&hm=0e8ac3ae70f913ee77da7af61c5e793b75081ae9ec17f59b6ab318a008740a90&",
+    "https://cdn.discordapp.com/attachments/1555563045617410181/1556162720041275472/image.png?backend=b2&ex=6ac328f8&is=6ac1d778&hm=efc216a930d5a4e28d516aca2acd1bbfc9a45654668a178dbeff04d2e5aaef75&"
+]
+
 def load_data():
     if not os.path.exists(DATA_FILE):
         return {}
@@ -161,10 +173,11 @@ async def on_member_join(member):
     channel = member.guild.system_channel
     if channel:
         message = random.choice(welcome_messages)
-        await channel.send(
-            f"{message} {member.mention}\nВыбери организацию и заполни анкету.",
-            view=ApplicationView()
+        embed = discord.Embed(
+            description=f"{message} {member.mention}\nВыбери организацию и заполни анкету."
         )
+        embed.set_image(url=random.choice(welcome_images))
+        await channel.send(embed=embed, view=ApplicationView())
 
 @bot.command(name="привет")
 async def hello(ctx):
