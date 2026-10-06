@@ -22,7 +22,6 @@ WEEK_TZ = ZoneInfo("Europe/Moscow")
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
-
 bot = commands.Bot(command_prefix=PREFIX, intents=intents)
 
 welcome_messages = [
@@ -72,7 +71,6 @@ welcome_messages = [
     "Здарова! Залетай, располагайся поудобнее!",
     "Добро пожаловать в семью! Мы тебя ждали!"
 ]
-
 welcome_images = [
     "https://cdn.discordapp.com/attachments/1555563045617410181/1556162706195746826/image.png?backend=b2&ex=6ac328f5&is=6ac1d775&hm=76c4b21601b68815aaa6a68f5cbfe799b8668898d00905f4e860c290dbf069ef&",
     "https://cdn.discordapp.com/attachments/1555563045617410181/1556162708569718894/image.png?backend=b2&ex=6ac328f5&is=6ac1d775&hm=dc82237f3c54ff5f3a054015be583bc5fda666133145908e81cc96af19102863&",
@@ -85,15 +83,20 @@ welcome_images = [
     "https://cdn.discordapp.com/attachments/1555563045617410181/1556162720041275472/image.png?backend=b2&ex=6ac328f8&is=6ac1d778&hm=efc216a930d5a4e28d516aca2acd1bbfc9a45654668a178dbeff04d2e5aaef75&"
 ]
 
+AMOUNT_RE = re.compile(r"\d{1,3}(?:[ \u00a0.,]\d{3})+|\d{3,12}")
+
+
 def load_data():
     if not os.path.exists(DATA_FILE):
         return {}
     with open(DATA_FILE, "r", encoding="utf-8") as f:
         return json.load(f)
 
+
 def save_data(data):
     with open(DATA_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
+
 
 def get_user(data, guild_id, user_id):
     gid = str(guild_id)
@@ -103,9 +106,11 @@ def get_user(data, guild_id, user_id):
     data[gid][uid].setdefault("profile", {})
     return data[gid][uid]
 
+
 def can_moderate(ctx):
     perms = ctx.author.guild_permissions
     return perms.ban_members or perms.administrator
+
 
 def in_family(member):
     for role in member.roles:
@@ -114,16 +119,39 @@ def in_family(member):
             return True
     return False
 
+
 def find_role(guild, name):
     return discord.utils.find(lambda r: r.name.lower() == name.lower(), guild.roles)
+
 
 def current_week():
     return datetime.now(WEEK_TZ).strftime("%Y-W%W")
 
+
+def numbers_from_text(text):
+    text = (text or "").replace("\u00a0", " ")
+    found = []
+    for raw in AMOUNT_RE.findall(text):
+        digits = re.sub(r"\D", "", raw)
+        if not digits.isdigit():
+            continue
+        value = int(digits)
+        if 1 <= value <= 50_000_000:
+            found.append(value)
+    return found
+
+
 def screenshot_numbers(image_bytes):
     image = Image.open(io.BytesIO(image_bytes))
-    text = pytesseract.image_to_string(image, lang="rus+eng")
-    return [int(re.sub(r"\s+", "", n)) for n in re.findall(r"\d[\d\s]{2,}", text)]
+    texts = [pytesseract.image_to_string(image, lang="rus+eng")]
+    gray = image.convert("L")
+    texts.append(pytesseract.image_to_string(gray, lang="rus+eng", config="--psm 6"))
+    found = []
+    for text in texts:
+        found.extend(numbers_from_text(text))
+    # 486101, 486 101, 1 600 000, 1.600.000 — все проходят
+    return list(dict.fromkeys(found))
+
 
 def top_lines(guild, rows):
     lines = []
@@ -132,6 +160,21 @@ def top_lines(guild, rows):
         name = member.display_name if member else uid
         lines.append(f"{i}. {name} — {amount}")
     return "\n".join(lines) if lines else "Пока пусто."
+
+
+class FilledView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+        done = discord.ui.Select(
+            placeholder="Анкета заполнена",
+            min_values=1,
+            max_values=1,
+            options=[discord.SelectOption(label="Анкета заполнена", value="done")],
+            disabled=True,
+            custom_id="anketa_filled",
+        )
+        self.add_item(done)
+
 
 class ApplicationModal(discord.ui.Modal, title="Анкета"):
     def __init__(self, org, source_message):
@@ -160,13 +203,11 @@ class ApplicationModal(discord.ui.Modal, title="Анкета"):
             "timezone": str(self.timezone.value).strip(),
         }
         save_data(data)
-
         nick_ok = True
         try:
             await interaction.user.edit(nick=ic_name)
         except discord.Forbidden:
             nick_ok = False
-
         names = [ROLE_NAME, self.org]
         roles = [find_role(guild, name) for name in names]
         roles = [r for r in roles if r]
@@ -177,19 +218,18 @@ class ApplicationModal(discord.ui.Modal, title="Анкета"):
         except discord.Forbidden:
             await interaction.response.send_message("Анкета сохранена, но роль бота ниже выдаваемых ролей.", ephemeral=True)
             return
-
-        done = discord.Embed(description=f"{interaction.user.mention}\nЗаявка оформлена ✅")
+        done = discord.Embed(description=f"{interaction.user.mention}\nАнкета заполнена ✅")
         try:
-            await self.source_message.edit(embed=done, view=None)
+            await self.source_message.edit(embed=done, view=FilledView())
         except discord.HTTPException:
             pass
-
-        text = f"Заявка оформлена ✅\nОрганизация: {self.org}\nНик: {ic_name}"
+        text = f"Анкета заполнена ✅\nОрганизация: {self.org}\nНик: {ic_name}"
         if not nick_ok:
             text += "\nНик не сменён: роль бота ниже роли человека или это владелец сервера."
         if missing:
             text += "\nНе найдены роли: " + ", ".join(missing)
         await interaction.response.send_message(text, ephemeral=True)
+
 
 class OrgSelect(discord.ui.Select):
     def __init__(self):
@@ -199,17 +239,21 @@ class OrgSelect(discord.ui.Select):
     async def callback(self, interaction: discord.Interaction):
         await interaction.response.send_modal(ApplicationModal(self.values[0], interaction.message))
 
+
 class ApplicationView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
         self.add_item(OrgSelect())
 
+
 @bot.event
 async def on_ready():
     bot.add_view(ApplicationView())
+    bot.add_view(FilledView())
     if not week_reset.is_running():
         week_reset.start()
     print(f"Бот {bot.user} успешно запущен!")
+
 
 @bot.event
 async def on_member_join(member):
@@ -220,41 +264,35 @@ async def on_member_join(member):
         embed.set_image(url=random.choice(welcome_images))
         await channel.send(embed=embed, view=ApplicationView())
 
+
 @bot.event
 async def on_message(message):
     if message.author.bot or not message.guild:
         return
-
     await bot.process_commands(message)
-
     if not message.channel.name.startswith(DEPOSIT_CHANNEL):
         return
-
     images = [f for f in message.attachments if f.content_type and f.content_type.startswith("image/")]
     if not images:
         return
     if len(images) != 2:
         await message.reply("Нужно 2 скрина: сначала банк до пополнения, потом банк после.")
         return
-
     try:
         before = screenshot_numbers(await images[0].read())
         after = screenshot_numbers(await images[1].read())
     except Exception as e:
         await message.reply(f"Ошибка чтения скрина: {e}")
         return
-
     if not before or not after:
         await message.reply("Не увидел сумму счёта на скрине.")
         return
-
     old_balance = max(before)
     new_balance = max(after)
     amount = new_balance - old_balance
     if amount <= 0:
         await message.reply("На втором скрине счёт не больше, чем на первом. Сначала до, потом после.")
         return
-
     data = load_data()
     user = get_user(data, message.guild.id, message.author.id)
     week = current_week()
@@ -274,6 +312,7 @@ async def on_message(message):
         f"За эту неделю: {user['week_deposited']}\n"
         f"Счёт семьи: {new_balance}"
     )
+
 
 @tasks.loop(minutes=1)
 async def week_reset():
@@ -304,21 +343,26 @@ async def week_reset():
             await channel.send("🏁 Топ прошедшей недели\n" + text + "\n\nНовая неделя началась.")
     save_data(data)
 
+
 @bot.command(name="привет")
 async def hello(ctx):
     await ctx.send(f"Привет, {ctx.author.mention}! 👋")
+
 
 @bot.command(name="пинг")
 async def ping(ctx):
     await ctx.send(f"Понг! 🏓 {round(bot.latency * 1000)} мс")
 
+
 @bot.command(name="семья")
 async def family(ctx):
     await ctx.send("👨‍👩‍👧‍👦 Это наш семейный сервер! Здесь всегда рады всем ❤️")
 
+
 @bot.command(name="заявка")
 async def application(ctx):
     await ctx.send("Выбери организацию и заполни анкету.", view=ApplicationView())
+
 
 @bot.command(name="рейтинг")
 async def deposit_top(ctx):
@@ -338,6 +382,7 @@ async def deposit_top(ctx):
     balance = users.get("family_balance", 0)
     await ctx.send("🏆 Общий рейтинг\n" + top_lines(ctx.guild, rows) + f"\n\nСчёт семьи: {balance}")
 
+
 @bot.command(name="неделя")
 async def week_top(ctx):
     if not in_family(ctx.author):
@@ -356,6 +401,7 @@ async def week_top(ctx):
     previous = users.get("previous_week_text", "Прошлой недели ещё нет.")
     await ctx.send("📅 Прошлая неделя\n" + previous + "\n\n📅 Текущая неделя\n" + top_lines(ctx.guild, rows))
 
+
 @bot.command(name="счет")
 async def family_balance(ctx):
     if not in_family(ctx.author):
@@ -364,6 +410,7 @@ async def family_balance(ctx):
     data = load_data()
     balance = data.get(str(ctx.guild.id), {}).get("family_balance", 0)
     await ctx.send(f"💵 Счёт семьи: {balance}")
+
 
 @bot.command(name="инфа")
 async def info(ctx, member: discord.Member = None):
@@ -393,6 +440,7 @@ async def info(ctx, member: discord.Member = None):
         f"Предупреждения: {user['warnings']}/3\n"
         f"Выговоры: {user['reprimands']}/2"
     )
+
 
 @bot.command(name="предупреждение")
 async def warn(ctx, member: discord.Member = None, *, reason: str = "не указана"):
@@ -425,6 +473,7 @@ async def warn(ctx, member: discord.Member = None, *, reason: str = "не ука
     save_data(data)
     await ctx.send(text)
 
+
 @bot.command(name="выговор")
 async def reprimand(ctx, member: discord.Member = None, *, reason: str = "не указана"):
     if not can_moderate(ctx):
@@ -453,6 +502,7 @@ async def reprimand(ctx, member: discord.Member = None, *, reason: str = "не �
     save_data(data)
     await ctx.send(text)
 
+
 @bot.command(name="снятьпредупреждение")
 async def remove_warning(ctx, member: discord.Member = None):
     if not can_moderate(ctx):
@@ -469,6 +519,7 @@ async def remove_warning(ctx, member: discord.Member = None):
     user["warnings"] -= 1
     save_data(data)
     await ctx.send(f"✅ С {member.mention} снято 1 предупреждение. Осталось: {user['warnings']}/3")
+
 
 @bot.command(name="снятьвыговор")
 async def remove_reprimand(ctx, member: discord.Member = None):
@@ -487,6 +538,7 @@ async def remove_reprimand(ctx, member: discord.Member = None):
     save_data(data)
     await ctx.send(f"✅ С {member.mention} снят 1 выговор. Осталось: {user['reprimands']}/2")
 
+
 @bot.command(name="бан")
 async def ban_user(ctx, member: discord.Member = None, *, reason: str = "не указана"):
     if not can_moderate(ctx):
@@ -504,6 +556,7 @@ async def ban_user(ctx, member: discord.Member = None, *, reason: str = "не у
     except discord.Forbidden:
         await ctx.send("Не смог забанить. Подними роль бота выше роли человека.")
 
+
 @bot.command(name="очистить")
 async def clear_chat(ctx, amount: int = 10):
     if not can_moderate(ctx):
@@ -516,6 +569,7 @@ async def clear_chat(ctx, amount: int = 10):
     msg = await ctx.send(f"Удалено сообщений: {len(deleted) - 1}")
     await msg.delete(delay=3)
 
+
 @bot.command(name="досье")
 async def dossier(ctx, member: discord.Member = None):
     member = member or ctx.author
@@ -527,6 +581,7 @@ async def dossier(ctx, member: discord.Member = None):
         f"Выговоры: {user['reprimands']}/2"
     )
 
+
 @bot.command(name="созыв")
 async def call_all(ctx, *, text: str = None):
     if not can_moderate(ctx):
@@ -536,6 +591,7 @@ async def call_all(ctx, *, text: str = None):
         await ctx.send("Напиши: `!созыв текст созыва`")
         return
     await ctx.send(f"@everyone\n{text}\nВызвал: {ctx.author.mention}")
+
 
 @bot.command(name="помощь")
 async def help_command(ctx):
@@ -557,5 +613,6 @@ async def help_command(ctx):
     embed.add_field(name="!очистить 10", value="Удалить сообщения. От 1 до 100", inline=False)
     embed.add_field(name="!созыв текст", value="Позвать всех", inline=False)
     await ctx.send(embed=embed)
+
 
 bot.run(TOKEN)
