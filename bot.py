@@ -240,8 +240,8 @@ async def on_message(message):
     try:
         before = screenshot_numbers(await images[0].read())
         after = screenshot_numbers(await images[1].read())
-    except Exception:
-        await message.reply("Скрины не прочитались. Проверь tesseract на Railway.")
+    except Exception as e:
+        await message.reply(f"Ошибка чтения скрина: {e}")
         return
 
     if not before or not after:
